@@ -15,26 +15,46 @@ from sheets_integration import SheetsManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment variables
+# Environment variables - with safe defaults
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 GOOGLE_SHEETS_ID = os.environ.get('GOOGLE_SHEETS_ID')
 GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_CREDENTIALS_JSON')
 
-# Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
+# Configure Gemini only if API key is available
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 class ExpenseTracker:
     def __init__(self):
-        # Use the latest Gemini 2.5 Flash model
-        self.model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
-        self.sheets_manager = SheetsManager(
-            credentials_json=GOOGLE_CREDENTIALS_JSON,
-            spreadsheet_id=GOOGLE_SHEETS_ID
-        )
+        # Only initialize if required env vars are present
+        if not GEMINI_API_KEY:
+            logger.warning("GEMINI_API_KEY not found - AI features disabled")
+            self.model = None
+        else:
+            self.model = genai.GenerativeModel('gemini-2.5-flash-preview-05-20')
         
+        # Sheets manager will be initialized lazily
+        self._sheets_manager = None
+        
+    @property
+    def sheets_manager(self):
+        """Lazy initialization of SheetsManager"""
+        if self._sheets_manager is None and GOOGLE_CREDENTIALS_JSON and GOOGLE_SHEETS_ID:
+            try:
+                self._sheets_manager = SheetsManager(
+                    credentials_json=GOOGLE_CREDENTIALS_JSON,
+                    spreadsheet_id=GOOGLE_SHEETS_ID
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize SheetsManager: {e}")
+        return self._sheets_manager
+
     def extract_expense_data(self, text_content=None, image_data=None):
         """Extract expense information using Gemini 2.5 Flash"""
+        if not self.model:
+            return {"error": "AI service not available"}
+        
         prompt = """
         Analyze this receipt/expense and extract the following information in JSON format:
         {
@@ -85,6 +105,10 @@ class ExpenseTracker:
 
     def log_to_sheets(self, expense_data):
         """Log expense to Google Sheets"""
+        if not self.sheets_manager:
+            logger.warning("Sheets not configured")
+            return False
+        
         try:
             return self.sheets_manager.log_expense(expense_data)
         except Exception as e:
@@ -139,28 +163,28 @@ def download_telegram_file(file_id):
 def lambda_handler(event, context):
     """Main Lambda handler for Telegram webhook"""
     try:
-        # Fix: Handle deployment/warmup events
+        # Handle deployment/warmup events
         if not event or 'body' not in event:
-            logger.info("Received deployment/warmup event")
             return {"statusCode": 200, "body": "Lambda ready"}
+        
+        # Validate environment
+        if not TELEGRAM_BOT_TOKEN:
+            logger.error("TELEGRAM_BOT_TOKEN not configured")
+            return {"statusCode": 500, "body": "Bot not configured"}
         
         # Parse Telegram update
         body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
         
-        # Fix: Validate it's actually a Telegram update
         if 'message' not in body:
-            logger.info("Received non-Telegram event")
             return {"statusCode": 200, "body": "Not a Telegram update"}
             
-        # Extract message data
         message = body.get('message', {})
         chat_id = message.get('chat', {}).get('id')
         
         if not chat_id:
-            logger.info("No chat_id found in message")
             return {"statusCode": 200, "body": "No chat_id found"}
         
-        # Fix: Only initialize tracker when we have a valid Telegram message
+        # Initialize tracker
         tracker = ExpenseTracker()
         expense_data = None
         

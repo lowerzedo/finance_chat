@@ -7,9 +7,6 @@
     "s3_bucket": "finance-chat-bot-zappa-deployments",
     "memory_size": 512,
     "timeout_seconds": 60,
-    "environment_variables": {
-      "ENVIRONMENT": "dev"
-    },
     "exclude": [
       "*.pyc",
       "__pycache__",
@@ -33,9 +30,6 @@
     "s3_bucket": "finance-chat-bot-zappa-deployments-prod",
     "memory_size": 512,
     "timeout_seconds": 60,
-    "environment_variables": {
-      "ENVIRONMENT": "production"
-    },
     "exclude": [
       "*.pyc",
       "__pycache__",
