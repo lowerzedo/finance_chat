@@ -1,0 +1,56 @@
+{
+  "dev": {
+    "app_function": "app.lambda_handler",
+    "aws_region": "ap-southeast-1",
+    "profile_name": "default",
+    "project_name": "finance-chat-bot",
+    "runtime": "python3.11",
+    "s3_bucket": "finance-chat-bot-zappa-deployments",
+    "memory_size": 512,
+    "timeout_seconds": 30,
+    "environment_variables": {
+      "ENVIRONMENT": "dev"
+    },
+    "exclude": [
+      "*.pyc",
+      "__pycache__",
+      "*.git*",
+      "venv/*",
+      ".env",
+      "tests/*",
+      "*.md",
+      ".github/*"
+    ],
+    "keep_warm": false,
+    "cors": true,
+    "api_key_required": false,
+    "binary_support": true
+  },
+  "production": {
+    "app_function": "app.lambda_handler",
+    "aws_region": "ap-southeast-1",
+    "profile_name": "default",
+    "project_name": "finance-chat-bot",
+    "runtime": "python3.11",
+    "s3_bucket": "finance-chat-bot-zappa-deployments-prod",
+    "memory_size": 1024,
+    "timeout_seconds": 60,
+    "environment_variables": {
+      "ENVIRONMENT": "production"
+    },
+    "exclude": [
+      "*.pyc",
+      "__pycache__",
+      "*.git*",
+      "venv/*",
+      ".env",
+      "tests/*",
+      "*.md",
+      ".github/*"
+    ],
+    "keep_warm": true,
+    "cors": true,
+    "api_key_required": false,
+    "binary_support": true
+  }
+}

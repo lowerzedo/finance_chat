@@ -1,0 +1,9 @@
+requests>=2.31.0
+google-generativeai>=0.8.5
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+google-api-python-client>=2.100.0
+Pillow>=10.0.0
+python-telegram-bot>=20.6
+zappa==0.60.1
