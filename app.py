@@ -163,25 +163,50 @@ def download_telegram_file(file_id):
 def lambda_handler(event, context):
     """Main Lambda handler for Telegram webhook"""
     try:
-        # Handle deployment/warmup events
+        # 1. Handle null event or event without 'body' key (common for some pings)
         if not event or 'body' not in event:
+            logger.info("Event is None or 'body' key is missing. Treating as health check/warmup.")
             return {"statusCode": 200, "body": "Lambda ready"}
-        
-        # Validate environment
+
+        event_body_content = event['body']
+
+        # 2. Handle if 'body' content is None or an empty string (common for GET requests or simple pings)
+        if event_body_content is None or \
+           (isinstance(event_body_content, str) and not event_body_content.strip()):
+            logger.info("Event body content is None or an empty string. Treating as health check/warmup.")
+            return {"statusCode": 200, "body": "Lambda ready"}
+            
+        # Validate environment (should be done after basic health checks pass)
         if not TELEGRAM_BOT_TOKEN:
             logger.error("TELEGRAM_BOT_TOKEN not configured")
             return {"statusCode": 500, "body": "Bot not configured"}
         
-        # Parse Telegram update
-        body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        
-        if 'message' not in body:
-            return {"statusCode": 200, "body": "Not a Telegram update"}
+        # 3. Parse the body content
+        parsed_body_dict = None
+        if isinstance(event_body_content, str):
+            try:
+                parsed_body_dict = json.loads(event_body_content)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse string event body as JSON: '{str(event_body_content)[:200]}...'. Assuming non-Telegram event or health check.")
+                return {"statusCode": 200, "body": "Lambda ready (invalid JSON string body)"}
+        elif isinstance(event_body_content, dict):
+            parsed_body_dict = event_body_content
+        else:
+            # This case handles unexpected types for event_body_content.
+            logger.warning(f"Event body content is of unexpected type: {type(event_body_content)}. Content: {str(event_body_content)[:200]}. Treating as health check/warmup.")
+            return {"statusCode": 200, "body": "Lambda ready (unexpected body type)"}
+
+        # 4. Check for 'message' key in the parsed dictionary
+        # Also ensure parsed_body_dict is actually a dictionary before checking keys
+        if not isinstance(parsed_body_dict, dict) or 'message' not in parsed_body_dict:
+            logger.info("Parsed body is not a dict or does not contain 'message' key. Assuming keep-warm or non-Telegram event.")
+            return {"statusCode": 200, "body": "OK (not a message event or keep-warm)"}
             
-        message = body.get('message', {})
+        message = parsed_body_dict.get('message', {}) # Use parsed_body_dict
         chat_id = message.get('chat', {}).get('id')
         
         if not chat_id:
+            logger.warning("No chat_id found in message after processing.")
             return {"statusCode": 200, "body": "No chat_id found"}
         
         # Initialize tracker
@@ -281,7 +306,7 @@ Send me:
 🛍️ Shopping: ${summary['shopping']:.2f}
 🎬 Entertainment: ${summary['entertainment']:.2f}
 🏥 Healthcare: ${summary['healthcare']:.2f}
-📦 Other: ${summary['other']:.2f}
+�� Other: ${summary['other']:.2f}
                         """
                         send_telegram_message(chat_id, summary_msg)
                     else:
