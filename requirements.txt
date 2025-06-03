@@ -4,7 +4,7 @@ google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 google-api-python-client==2.147.0
-requests==2.31.0
+requests==2.32.3
 Pillow==10.4.0
 gunicorn==21.2.0
 zappa==0.60.2
