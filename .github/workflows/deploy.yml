@@ -23,17 +23,15 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install dependencies
+      - name: Create virtual environment and install dependencies
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install zappa
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Verify Google libraries are installed in venv
+          python -c "import google.auth; import googleapiclient.discovery; print('✅ Google libraries installed in venv')"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -44,7 +42,7 @@ jobs:
 
       - name: Update Zappa settings with secrets
         run: |
-          # Update zappa_settings.json with GitHub secrets
+          source venv/bin/activate
           python -c "
           import json
           import os
@@ -52,7 +50,6 @@ jobs:
           with open('zappa_settings.json', 'r') as f:
               config = json.load(f)
 
-          # Update environment variables from secrets
           aws_environment_variables = {
               'TELEGRAM_BOT_TOKEN': '${{ secrets.TELEGRAM_BOT_TOKEN }}',
               'GEMINI_API_KEY': '${{ secrets.GEMINI_API_KEY }}',
@@ -67,31 +64,73 @@ jobs:
               json.dump(config, f, indent=2)
           "
 
-      - name: Setup Google Sheets (optional)
+      - name: Validate secrets
+        run: |
+          source venv/bin/activate
+          python -c "
+          import json
+
+          # Check credentials JSON
+          try:
+              creds = json.loads('${{ secrets.GOOGLE_CREDENTIALS_JSON }}')
+              print('✅ Valid Google credentials JSON')
+              print(f'Service account: {creds.get(\"client_email\", \"Unknown\")}')
+          except Exception as e:
+              print(f'❌ Invalid Google credentials JSON: {e}')
+              exit(1)
+
+          # Check Sheet ID
+          sheet_id = '${{ secrets.GOOGLE_SHEETS_ID }}'
+          if len(sheet_id) > 20:
+              print(f'✅ Sheet ID looks valid: {sheet_id[:10]}...')
+          else:
+              print('❌ Sheet ID seems too short or invalid')
+              exit(1)
+          "
+
+      - name: Setup Google Sheets
         continue-on-error: true
         run: |
+          source venv/bin/activate
           python -c "
           import os
-          os.environ['TELEGRAM_BOT_TOKEN'] = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
-          os.environ['GEMINI_API_KEY'] = '${{ secrets.GEMINI_API_KEY }}'
+          import sys
+
           os.environ['GOOGLE_SHEETS_ID'] = '${{ secrets.GOOGLE_SHEETS_ID }}'
           os.environ['GOOGLE_CREDENTIALS_JSON'] = '${{ secrets.GOOGLE_CREDENTIALS_JSON }}'
 
           try:
+              print('Importing SheetsManager...')
               from sheets_integration import SheetsManager
+              print('✅ SheetsManager imported successfully')
+              
+              print('Initializing SheetsManager...')
               sheets_manager = SheetsManager(
                   credentials_json=os.environ.get('GOOGLE_CREDENTIALS_JSON'),
                   spreadsheet_id=os.environ.get('GOOGLE_SHEETS_ID')
               )
+              print('✅ SheetsManager initialized')
+              
+              print('Setting up sheets...')
               success = sheets_manager.setup_sheets()
-              print(' Google Sheets setup completed' if success else ' Google Sheets setup failed')
+              print('✅ Google Sheets setup completed' if success else '⚠️ Setup completed with warnings')
+              
+          except ImportError as e:
+              print(f'❌ Import error: {e}')
+              print('Checking installed packages...')
+              import pkg_resources
+              installed = [str(d) for d in pkg_resources.working_set]
+              google_pkgs = [p for p in installed if 'google' in p.lower()]
+              print(f'Google packages: {google_pkgs}')
+              
           except Exception as e:
-              print(f'Google Sheets setup error: {e}')
+              print(f'⚠️ Google Sheets setup error: {e}')
+              print('This is not critical - sheets can be set up manually later')
           "
 
       - name: Deploy with Zappa
         run: |
-          # Check if this is first deployment
+          source venv/bin/activate
           if zappa status ${{ matrix.environment }} 2>/dev/null; then
             echo "Updating existing deployment..."
             zappa update ${{ matrix.environment }}
@@ -103,14 +142,15 @@ jobs:
       - name: Get deployment URL
         id: get-url
         run: |
-          # Extract URL from zappa status
+          source venv/bin/activate
           URL=$(zappa status ${{ matrix.environment }} | grep -o 'https://[^[:space:]]*' | head -1)
           echo "LAMBDA_URL=$URL" >> $GITHUB_OUTPUT
-          echo "Lambda URL: $URL"
+          echo "Deployment URL: $URL"
 
       - name: Set Telegram Webhook
         if: steps.get-url.outputs.LAMBDA_URL != ''
         run: |
+          source venv/bin/activate
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/setWebhook" \
                -H "Content-Type: application/json" \
                -d "{\"url\": \"${{ steps.get-url.outputs.LAMBDA_URL }}\"}" \
@@ -118,19 +158,45 @@ jobs:
           import json, sys
           response = json.load(sys.stdin)
           if response.get('ok'):
-              print(' Telegram webhook set successfully')
+              print('✅ Telegram webhook set successfully')
           else:
-              print(f'Failed to set webhook: {response}')
+              print(f'❌ Failed to set webhook: {response}')
               sys.exit(1)
+          "
+
+      - name: Test basic bot functionality
+        if: steps.get-url.outputs.LAMBDA_URL != ''
+        continue-on-error: true
+        run: |
+          source venv/bin/activate
+          echo "🧪 Testing bot functionality..."
+
+          # Test if bot responds to basic command
+          python -c "
+          import requests
+          import json
+
+          bot_token = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
+
+          # Get bot info to verify it's working
+          response = requests.get(f'https://api.telegram.org/bot{bot_token}/getMe')
+          if response.json().get('ok'):
+              bot_info = response.json()['result']
+              print(f'✅ Bot @{bot_info[\"username\"]} is active')
+          else:
+              print('⚠️ Could not verify bot status')
           "
 
       - name: Deployment Summary
         run: |
           echo "🎉 Deployment completed successfully!"
-          echo "Environment: ${{ matrix.environment }}"
-          echo "Lambda URL: ${{ steps.get-url.outputs.LAMBDA_URL }}"
+          echo "🔗 Lambda URL: ${{ steps.get-url.outputs.LAMBDA_URL }}"
           echo ""
-          echo "Next steps:"
-          echo "1. Test your bot by sending a message"
-          echo "2. Send a receipt photo or text expense"
-          echo "3. Check your Google Sheets for logged expenses"
+          echo "✅ Your bot is now live! Next steps:"
+          echo "1. Find your bot on Telegram and start a chat"
+          echo "2. Send /start to see the welcome message"
+          echo "3. Test with: 'Coffee $5.50' or send a receipt photo"
+          echo "4. Use /summary to check monthly totals"
+          echo "5. Use /setup if Google Sheets setup failed"
+          echo ""
+          echo "📊 Check your Google Sheets for logged expenses!"
