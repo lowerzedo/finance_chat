@@ -1,8 +1,12 @@
 import json
 import os
 import logging
+import base64
 import io
+from datetime import datetime
 import google.generativeai as genai
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 import requests
 from PIL import Image
 from sheets_integration import SheetsManager
@@ -29,7 +33,7 @@ class ExpenseTracker:
             spreadsheet_id=GOOGLE_SHEETS_ID
         )
         
-    def extract_expense_data(self, text_content=None, image_content=None):
+    def extract_expense_data(self, text_content=None, image_data=None):
         """Extract expense information using Gemini 2.5 Flash"""
         prompt = """
         Analyze this receipt/expense and extract the following information in JSON format:
@@ -45,9 +49,15 @@ class ExpenseTracker:
         """
         
         try:
-            if image_content:
+            if image_data:
+                # Create image part for Gemini API
+                image_part = {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(image_data).decode()
+                }
+                
                 # Process image with text
-                response = self.model.generate_content([prompt, image_content])
+                response = self.model.generate_content([prompt, image_part])
             else:
                 # Process text only
                 response = self.model.generate_content(f"{prompt}\n\nText: {text_content}")
@@ -146,8 +156,23 @@ def lambda_handler(event, context):
             file_content = download_telegram_file(photo['file_id'])
             
             if file_content:
-                image = Image.open(io.BytesIO(file_content))
-                expense_data = tracker.extract_expense_data(image_content=image)
+                # Convert to JPEG format if needed
+                try:
+                    image = Image.open(io.BytesIO(file_content))
+                    # Convert to RGB if necessary (for PNG with transparency)
+                    if image.mode in ('RGBA', 'LA', 'P'):
+                        image = image.convert('RGB')
+                    
+                    # Save as JPEG bytes
+                    img_byte_arr = io.BytesIO()
+                    image.save(img_byte_arr, format='JPEG', quality=85)
+                    img_byte_arr = img_byte_arr.getvalue()
+                    
+                    expense_data = tracker.extract_expense_data(image_data=img_byte_arr)
+                except Exception as e:
+                    logger.error(f"Error processing image: {e}")
+                    send_telegram_message(chat_id, "❌ Failed to process image")
+                    return {"statusCode": 200}
             else:
                 send_telegram_message(chat_id, "❌ Failed to download image")
                 return {"statusCode": 200}
@@ -158,8 +183,22 @@ def lambda_handler(event, context):
             if document['mime_type'].startswith('image/'):
                 file_content = download_telegram_file(document['file_id'])
                 if file_content:
-                    image = Image.open(io.BytesIO(file_content))
-                    expense_data = tracker.extract_expense_data(image_content=image)
+                    try:
+                        image = Image.open(io.BytesIO(file_content))
+                        # Convert to RGB if necessary
+                        if image.mode in ('RGBA', 'LA', 'P'):
+                            image = image.convert('RGB')
+                        
+                        # Save as JPEG bytes
+                        img_byte_arr = io.BytesIO()
+                        image.save(img_byte_arr, format='JPEG', quality=85)
+                        img_byte_arr = img_byte_arr.getvalue()
+                        
+                        expense_data = tracker.extract_expense_data(image_data=img_byte_arr)
+                    except Exception as e:
+                        logger.error(f"Error processing document image: {e}")
+                        send_telegram_message(chat_id, "❌ Failed to process document")
+                        return {"statusCode": 200}
                 else:
                     send_telegram_message(chat_id, "❌ Failed to download document")
                     return {"statusCode": 200}
