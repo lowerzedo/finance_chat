@@ -162,6 +162,17 @@ def download_telegram_file(file_id):
 
 def lambda_handler(event, context):
     """Main Lambda handler for Telegram webhook"""
+
+    logger.info(f"Event: {event}")
+    logger.info(f"Context: {context}")
+
+    if event['body'] == '':
+        return {"statusCode": 200, "body": "Lambda ready"}
+    else:
+        return lambda_handler_called_by_zappa(event, context)
+
+def lambda_handler_called_by_zappa(event, context):
+    """Main Lambda handler for Telegram webhook"""
     try:
         # 1. Handle null event or event without 'body' key (common for some pings)
         if not event or 'body' not in event:
