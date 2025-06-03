@@ -4,6 +4,7 @@ import logging
 import base64
 import io
 from datetime import datetime
+from flask import Flask, request, jsonify
 import google.generativeai as genai
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -14,6 +15,9 @@ from sheets_integration import SheetsManager
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__)
 
 # Environment variables - with safe defaults
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -160,65 +164,35 @@ def download_telegram_file(file_id):
         logger.error(f"Error downloading Telegram file: {e}")
         return None
 
-def lambda_handler(event, context):
-    """Main Lambda handler for Telegram webhook"""
+# Flask Routes
+@app.route('/', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    logger.info("Health check requested")
+    return jsonify({"status": "OK", "message": "Finance Tracker Bot is running"}), 200
 
-    logger.info(f"Event: {event}")
-    logger.info(f"Context: {context}")
-
-    if event['body'] == '':
-        return {"statusCode": 200, "body": "Lambda ready"}
-    else:
-        return lambda_handler_called_by_zappa(event, context)
-
-def lambda_handler_called_by_zappa(event, context):
-    """Main Lambda handler for Telegram webhook"""
+@app.route('/webhook', methods=['POST'])
+def telegram_webhook():
+    """Main webhook endpoint for Telegram"""
     try:
-        # 1. Handle null event or event without 'body' key (common for some pings)
-        if not event or 'body' not in event:
-            logger.info("Event is None or 'body' key is missing. Treating as health check/warmup.")
-            return {"statusCode": 200, "body": "Lambda ready"}
-
-        event_body_content = event['body']
-
-        # 2. Handle if 'body' content is None or an empty string (common for GET requests or simple pings)
-        if event_body_content is None or \
-           (isinstance(event_body_content, str) and not event_body_content.strip()):
-            logger.info("Event body content is None or an empty string. Treating as health check/warmup.")
-            return {"statusCode": 200, "body": "Lambda ready"}
-            
-        # Validate environment (should be done after basic health checks pass)
+        # Validate environment
         if not TELEGRAM_BOT_TOKEN:
             logger.error("TELEGRAM_BOT_TOKEN not configured")
-            return {"statusCode": 500, "body": "Bot not configured"}
+            return jsonify({"error": "Bot not configured"}), 500
         
-        # 3. Parse the body content
-        parsed_body_dict = None
-        if isinstance(event_body_content, str):
-            try:
-                parsed_body_dict = json.loads(event_body_content)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse string event body as JSON: '{str(event_body_content)[:200]}...'. Assuming non-Telegram event or health check.")
-                return {"statusCode": 200, "body": "Lambda ready (invalid JSON string body)"}
-        elif isinstance(event_body_content, dict):
-            parsed_body_dict = event_body_content
-        else:
-            # This case handles unexpected types for event_body_content.
-            logger.warning(f"Event body content is of unexpected type: {type(event_body_content)}. Content: {str(event_body_content)[:200]}. Treating as health check/warmup.")
-            return {"statusCode": 200, "body": "Lambda ready (unexpected body type)"}
-
-        # 4. Check for 'message' key in the parsed dictionary
-        # Also ensure parsed_body_dict is actually a dictionary before checking keys
-        if not isinstance(parsed_body_dict, dict) or 'message' not in parsed_body_dict:
-            logger.info("Parsed body is not a dict or does not contain 'message' key. Assuming keep-warm or non-Telegram event.")
-            return {"statusCode": 200, "body": "OK (not a message event or keep-warm)"}
+        # Get request data
+        data = request.get_json()
+        
+        if not data or 'message' not in data:
+            logger.info("Not a message event or invalid data")
+            return jsonify({"status": "OK"}), 200
             
-        message = parsed_body_dict.get('message', {}) # Use parsed_body_dict
+        message = data.get('message', {})
         chat_id = message.get('chat', {}).get('id')
         
         if not chat_id:
-            logger.warning("No chat_id found in message after processing.")
-            return {"statusCode": 200, "body": "No chat_id found"}
+            logger.warning("No chat_id found in message")
+            return jsonify({"status": "OK"}), 200
         
         # Initialize tracker
         tracker = ExpenseTracker()
@@ -247,10 +221,10 @@ def lambda_handler_called_by_zappa(event, context):
                 except Exception as e:
                     logger.error(f"Error processing image: {e}")
                     send_telegram_message(chat_id, "❌ Failed to process image")
-                    return {"statusCode": 200}
+                    return jsonify({"status": "OK"}), 200
             else:
                 send_telegram_message(chat_id, "❌ Failed to download image")
-                return {"statusCode": 200}
+                return jsonify({"status": "OK"}), 200
                 
         elif 'document' in message:
             # Handle document
@@ -273,13 +247,13 @@ def lambda_handler_called_by_zappa(event, context):
                     except Exception as e:
                         logger.error(f"Error processing document image: {e}")
                         send_telegram_message(chat_id, "❌ Failed to process document")
-                        return {"statusCode": 200}
+                        return jsonify({"status": "OK"}), 200
                 else:
                     send_telegram_message(chat_id, "❌ Failed to download document")
-                    return {"statusCode": 200}
+                    return jsonify({"status": "OK"}), 200
             else:
                 send_telegram_message(chat_id, "📄 Please send an image file")
-                return {"statusCode": 200}
+                return jsonify({"status": "OK"}), 200
                 
         elif 'text' in message:
             # Handle text message
@@ -317,20 +291,23 @@ Send me:
 🛍️ Shopping: ${summary['shopping']:.2f}
 🎬 Entertainment: ${summary['entertainment']:.2f}
 🏥 Healthcare: ${summary['healthcare']:.2f}
-�� Other: ${summary['other']:.2f}
+📋 Other: ${summary['other']:.2f}
                         """
                         send_telegram_message(chat_id, summary_msg)
                     else:
                         send_telegram_message(chat_id, "❌ Failed to get summary")
                 
                 elif text_content == '/setup':
-                    success = tracker.sheets_manager.setup_sheets()
-                    if success:
-                        send_telegram_message(chat_id, "✅ Google Sheets setup completed!")
+                    if tracker.sheets_manager:
+                        success = tracker.sheets_manager.setup_sheets()
+                        if success:
+                            send_telegram_message(chat_id, "✅ Google Sheets setup completed!")
+                        else:
+                            send_telegram_message(chat_id, "❌ Failed to setup Google Sheets")
                     else:
-                        send_telegram_message(chat_id, "❌ Failed to setup Google Sheets")
+                        send_telegram_message(chat_id, "❌ Google Sheets not configured")
                 
-                return {"statusCode": 200}
+                return jsonify({"status": "OK"}), 200
             
             expense_data = tracker.extract_expense_data(text_content=text_content)
         
@@ -358,23 +335,52 @@ Send me:
         else:
             send_telegram_message(chat_id, "❌ Could not process your message")
         
-        return {"statusCode": 200, "body": "OK"}
+        return jsonify({"status": "OK"}), 200
         
     except Exception as e:
-        logger.error(f"Error in lambda_handler: {e}")
-        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+        logger.error(f"Error in webhook handler: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/set_webhook', methods=['POST'])
+def set_webhook():
+    """Set Telegram webhook URL"""
+    if not TELEGRAM_BOT_TOKEN:
+        return jsonify({"error": "TELEGRAM_BOT_TOKEN not configured"}), 500
+    
+    data = request.get_json()
+    webhook_url = data.get('webhook_url')
+    
+    if not webhook_url:
+        return jsonify({"error": "webhook_url required"}), 400
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        response = requests.post(url, json={"url": webhook_url})
+        result = response.json()
+        
+        if result.get('ok'):
+            return jsonify({"status": "success", "message": "Webhook set successfully"}), 200
+        else:
+            return jsonify({"status": "error", "message": result.get('description', 'Unknown error')}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # For local testing
 if __name__ == "__main__":
-    # Test event simulation
-    test_event = {
-        "body": json.dumps({
-            "message": {
-                "chat": {"id": 123456789},
-                "text": "Coffee $5.50"
-            }
-        })
-    }
+    # Check for required environment variables
+    missing_vars = []
+    if not TELEGRAM_BOT_TOKEN:
+        missing_vars.append("TELEGRAM_BOT_TOKEN")
+    if not GEMINI_API_KEY:
+        missing_vars.append("GEMINI_API_KEY")
     
-    result = lambda_handler(test_event, None)
-    print(f"Result: {result}") 
+    if missing_vars:
+        logger.warning(f"Missing environment variables: {', '.join(missing_vars)}")
+        logger.warning("Some features may be disabled")
+    
+    # Run Flask app
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    logger.info(f"Starting Flask app on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=debug) 

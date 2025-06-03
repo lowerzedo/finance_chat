@@ -1,6 +1,6 @@
 {
   "dev": {
-    "app_function": "app.lambda_handler",
+    "app_function": "app.app",
     "aws_region": "ap-southeast-1",
     "project_name": "finance-chat-bot",
     "runtime": "python3.11",
@@ -23,7 +23,7 @@
     "binary_support": true
   },
   "production": {
-    "app_function": "app.lambda_handler",
+    "app_function": "app.app",
     "aws_region": "ap-southeast-1",
     "project_name": "finance-chat-bot",
     "runtime": "python3.11",
