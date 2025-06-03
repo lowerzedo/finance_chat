@@ -50,7 +50,7 @@ class ExpenseTracker:
         
         try:
             if image_data:
-                # Create image part for Gemini API
+                # Create image part for Gemini API - Fix: Don't log the image_data
                 image_part = {
                     "mime_type": "image/jpeg",
                     "data": base64.b64encode(image_data).decode()
@@ -62,6 +62,11 @@ class ExpenseTracker:
                 # Process text only
                 response = self.model.generate_content(f"{prompt}\n\nText: {text_content}")
             
+            # Fix: Check if response exists and has text
+            if not response or not hasattr(response, 'text') or not response.text:
+                logger.error("Empty response from Gemini API")
+                return {"error": "No response from AI"}
+            
             # Extract JSON from response
             response_text = response.text.strip()
             if response_text.startswith('```json'):
@@ -71,6 +76,9 @@ class ExpenseTracker:
             
             return json.loads(response_text)
             
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            return {"error": "Failed to parse AI response"}
         except Exception as e:
             logger.error(f"Error processing with Gemini: {e}")
             return {"error": f"Processing failed: {str(e)}"}
@@ -131,21 +139,28 @@ def download_telegram_file(file_id):
 def lambda_handler(event, context):
     """Main Lambda handler for Telegram webhook"""
     try:
-        logger.info(f"Received event: {json.dumps(event)}")
+        # Fix: Handle deployment/warmup events
+        if not event or 'body' not in event:
+            logger.info("Received deployment/warmup event")
+            return {"statusCode": 200, "body": "Lambda ready"}
         
         # Parse Telegram update
-        if 'body' in event:
-            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
-        else:
-            body = event
+        body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+        
+        # Fix: Validate it's actually a Telegram update
+        if 'message' not in body:
+            logger.info("Received non-Telegram event")
+            return {"statusCode": 200, "body": "Not a Telegram update"}
             
         # Extract message data
         message = body.get('message', {})
         chat_id = message.get('chat', {}).get('id')
         
         if not chat_id:
+            logger.info("No chat_id found in message")
             return {"statusCode": 200, "body": "No chat_id found"}
         
+        # Fix: Only initialize tracker when we have a valid Telegram message
         tracker = ExpenseTracker()
         expense_data = None
         
