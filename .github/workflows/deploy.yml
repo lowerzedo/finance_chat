@@ -40,48 +40,48 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-1
 
-      - name: Create credentials file and update Zappa settings
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
-          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-        run: |
-          source venv/bin/activate
+      #   - name: Create credentials file and update Zappa settings
+      #     env:
+      #       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      #       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      #       GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+      #       GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      #     run: |
+      #       source venv/bin/activate
 
-          # Update Zappa settings with error handling
-          python -c "
-          import json
-          import os
+      #       # Update Zappa settings with error handling
+      #       python -c "
+      #       import json
+      #       import os
 
-          with open('zappa_settings.json', 'r') as f:
-              config = json.load(f)
+      #       with open('zappa_settings.json', 'r') as f:
+      #           config = json.load(f)
 
-          # Only add env vars that exist
-          aws_environment_variables = {
-              'ENVIRONMENT': '${{ matrix.environment }}'
-          }
+      #       # Only add env vars that exist
+      #       aws_environment_variables = {
+      #           'ENVIRONMENT': '${{ matrix.environment }}'
+      #       }
 
-          # Add optional env vars
-          if os.environ.get('TELEGRAM_BOT_TOKEN'):
-              aws_environment_variables['TELEGRAM_BOT_TOKEN'] = os.environ['TELEGRAM_BOT_TOKEN']
-              
-          if os.environ.get('GEMINI_API_KEY'):
-              aws_environment_variables['GEMINI_API_KEY'] = os.environ['GEMINI_API_KEY']
-              
-          if os.environ.get('GOOGLE_SHEETS_ID'):
-              aws_environment_variables['GOOGLE_SHEETS_ID'] = os.environ['GOOGLE_SHEETS_ID']
-              
-          if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
-              aws_environment_variables['GOOGLE_CREDENTIALS_JSON'] = os.environ['GOOGLE_CREDENTIALS_JSON']
+      #       # Add optional env vars
+      #       if os.environ.get('TELEGRAM_BOT_TOKEN'):
+      #           aws_environment_variables['TELEGRAM_BOT_TOKEN'] = os.environ['TELEGRAM_BOT_TOKEN']
 
-          config['${{ matrix.environment }}']['environment_variables'].update(aws_environment_variables)
+      #       if os.environ.get('GEMINI_API_KEY'):
+      #           aws_environment_variables['GEMINI_API_KEY'] = os.environ['GEMINI_API_KEY']
 
-          with open('zappa_settings.json', 'w') as f:
-              json.dump(config, f, indent=2)
+      #       if os.environ.get('GOOGLE_SHEETS_ID'):
+      #           aws_environment_variables['GOOGLE_SHEETS_ID'] = os.environ['GOOGLE_SHEETS_ID']
 
-          print('✅ Zappa settings updated')
-          "
+      #       if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
+      #           aws_environment_variables['GOOGLE_CREDENTIALS_JSON'] = os.environ['GOOGLE_CREDENTIALS_JSON']
+
+      #       config['${{ matrix.environment }}']['environment_variables'].update(aws_environment_variables)
+
+      #       with open('zappa_settings.json', 'w') as f:
+      #           json.dump(config, f, indent=2)
+
+      #       print('✅ Zappa settings updated')
+      #       "
 
       - name: Setup Google Sheets
         continue-on-error: true
@@ -96,89 +96,90 @@ jobs:
       - name: Deploy with Zappa (with retry)
         run: |
           source venv/bin/activate
+          zappa deploy ${{ matrix.environment }} || zappa update ${{ matrix.environment }}
 
-          # Add deployment retry logic
-          for i in {1..3}; do
-            echo "Deployment attempt $i..."
-            
-            if zappa status ${{ matrix.environment }} 2>/dev/null; then
-              echo "Updating existing deployment..."
-              if zappa update ${{ matrix.environment }}; then
-                echo "✅ Update successful"
-                break
-              else
-                echo "❌ Update failed, attempt $i"
-                if [ $i -eq 3 ]; then
-                  echo "All update attempts failed"
-                  exit 1
-                fi
-                sleep 10
-              fi
-            else
-              echo "First time deployment..."
-              if zappa deploy ${{ matrix.environment }}; then
-                echo "✅ Deploy successful"
-                break
-              else
-                echo "❌ Deploy failed, attempt $i"
-                if [ $i -eq 3 ]; then
-                  echo "All deploy attempts failed"
-                  exit 1
-                fi
-                sleep 10
-              fi
-            fi
-          done
+        #   # Add deployment retry logic
+        #   for i in {1..3}; do
+        #     echo "Deployment attempt $i..."
 
-      - name: Get deployment URL
-        id: get-url
-        run: |
-          source venv/bin/activate
-          URL=$(zappa status ${{ matrix.environment }} | grep -o 'https://[^[:space:]]*' | head -1)
-          echo "LAMBDA_URL=$URL" >> $GITHUB_OUTPUT
-          echo "Deployment URL: $URL"
+        #     if zappa status ${{ matrix.environment }} 2>/dev/null; then
+        #       echo "Updating existing deployment..."
+        #       if zappa update ${{ matrix.environment }}; then
+        #         echo "✅ Update successful"
+        #         break
+        #       else
+        #         echo "❌ Update failed, attempt $i"
+        #         if [ $i -eq 3 ]; then
+        #           echo "All update attempts failed"
+        #           exit 1
+        #         fi
+        #         sleep 10
+        #       fi
+        #     else
+        #       echo "First time deployment..."
+        #       if zappa deploy ${{ matrix.environment }}; then
+        #         echo "✅ Deploy successful"
+        #         break
+        #       else
+        #         echo "❌ Deploy failed, attempt $i"
+        #         if [ $i -eq 3 ]; then
+        #           echo "All deploy attempts failed"
+        #           exit 1
+        #         fi
+        #         sleep 10
+        #       fi
+        #     fi
+        #   done
 
-      - name: Set Telegram Webhook
-        if: steps.get-url.outputs.LAMBDA_URL != ''
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          source venv/bin/activate
-          curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
-               -H "Content-Type: application/json" \
-               -d "{\"url\": \"${{ steps.get-url.outputs.LAMBDA_URL }}\"}" \
-               -s | python -c "
-          import json, sys
-          response = json.load(sys.stdin)
-          if response.get('ok'):
-              print('✅ Telegram webhook set successfully')
-          else:
-              print(f'❌ Failed to set webhook: {response}')
-              sys.exit(1)
-          "
+      #   - name: Get deployment URL
+      #     id: get-url
+      #     run: |
+      #       source venv/bin/activate
+      #       URL=$(zappa status ${{ matrix.environment }} | grep -o 'https://[^[:space:]]*' | head -1)
+      #       echo "LAMBDA_URL=$URL" >> $GITHUB_OUTPUT
+      #       echo "Deployment URL: $URL"
 
-      - name: Test basic bot functionality
-        if: steps.get-url.outputs.LAMBDA_URL != ''
-        continue-on-error: true
-        run: |
-          source venv/bin/activate
-          echo "🧪 Testing bot functionality..."
+      #   - name: Set Telegram Webhook
+      #     if: steps.get-url.outputs.LAMBDA_URL != ''
+      #     env:
+      #       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      #     run: |
+      #       source venv/bin/activate
+      #       curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+      #            -H "Content-Type: application/json" \
+      #            -d "{\"url\": \"${{ steps.get-url.outputs.LAMBDA_URL }}\"}" \
+      #            -s | python -c "
+      #       import json, sys
+      #       response = json.load(sys.stdin)
+      #       if response.get('ok'):
+      #           print('✅ Telegram webhook set successfully')
+      #       else:
+      #           print(f'❌ Failed to set webhook: {response}')
+      #           sys.exit(1)
+      #       "
 
-          # Test if bot responds to basic command
-          python -c "
-          import requests
-          import json
+      #   - name: Test basic bot functionality
+      #     if: steps.get-url.outputs.LAMBDA_URL != ''
+      #     continue-on-error: true
+      #     run: |
+      #       source venv/bin/activate
+      #       echo "🧪 Testing bot functionality..."
 
-          bot_token = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
+      #       # Test if bot responds to basic command
+      #       python -c "
+      #       import requests
+      #       import json
 
-          # Get bot info to verify it's working
-          response = requests.get(f'https://api.telegram.org/bot{bot_token}/getMe')
-          if response.json().get('ok'):
-              bot_info = response.json()['result']
-              print(f'✅ Bot @{bot_info[\"username\"]} is active')
-          else:
-              print('⚠️ Could not verify bot status')
-          "
+      #       bot_token = '${{ secrets.TELEGRAM_BOT_TOKEN }}'
+
+      #       # Get bot info to verify it's working
+      #       response = requests.get(f'https://api.telegram.org/bot{bot_token}/getMe')
+      #       if response.json().get('ok'):
+      #           bot_info = response.json()['result']
+      #           print(f'✅ Bot @{bot_info[\"username\"]} is active')
+      #       else:
+      #           print('⚠️ Could not verify bot status')
+      #       "
 
       - name: Deployment Summary
         run: |
